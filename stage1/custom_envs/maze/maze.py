@@ -1,0 +1,295 @@
+import gymnasium as gym
+from gymnasium import spaces
+import numpy as np
+import pygame
+import random
+
+
+class MazeEnv(gym.Env):
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
+
+    def __init__(
+        self,
+        grid_size=15,
+        target_position=(13, 13),
+        action_space_type="4d",
+        render_mode=None,
+        cell_size=40,
+    ):
+        super().__init__()
+        assert grid_size % 2 == 1, "网格尺寸必须是奇数"
+
+        self.bump_cnt=0
+        self.grid_size = grid_size
+        self.target_position = np.array(target_position)
+        self.action_space_type = action_space_type
+        self.render_mode = render_mode
+        self.cell_size = cell_size
+
+        # 动作空间
+        self.action_space = spaces.Discrete(8 if action_space_type == "8d" else 4)
+
+        # 观察空间（当前位置坐标）
+        self.observation_space = spaces.Box(
+            low=0, high=3, shape=(self.grid_size * self.grid_size+4,), dtype=np.float64
+        )
+
+        # 初始化迷宫
+        self.walls = set()
+        self.current_position = np.array([1, 1])
+        self._generate_maze()
+
+        # Pygame渲染相关
+        self.window = None
+        self.clock = None
+
+    def _is_path_clear(self, start, goal):
+        """检查起点到目标是否有路径（广度优先搜索）"""
+        visited = np.zeros((self.grid_size, self.grid_size), dtype=bool)
+        queue = [start]
+        visited[start[0], start[1]] = True
+
+        directions = [(0, -1), (1, 0), (0, 1), (-1, 0)]  # 上，下，左，右
+
+        while queue:
+            x, y = queue.pop(0)
+            if (x, y) == goal:
+                return True  # 找到路径
+            for dx, dy in directions:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < self.grid_size and 0 <= ny < self.grid_size:
+                    if not visited[nx, ny] and (nx, ny) not in self.walls:
+                        visited[nx, ny] = True
+                        queue.append((nx, ny))
+
+        return False  # 没有路径
+
+    def _generate_maze(self):
+        """生成迷宫，包含随机大小不超过4个格子的障碍物"""
+        self.walls.clear()
+
+        # 随机生成障碍物
+        max_obstacles = 8  # 最大障碍物数量
+        num_obstacles = random.randint(4, max_obstacles)  # 随机选择障碍物数量
+
+        for _ in range(num_obstacles):
+            while True:
+                # 随机选择障碍物的起始位置
+                x = random.randint(1, self.grid_size - 2)
+                y = random.randint(1, self.grid_size - 2)
+
+                # 随机选择障碍物的大小（1到4个格子）
+                size = random.randint(2, 6)
+
+                # 随机生成障碍物的形状
+                shape = self._random_shape(x, y, size)
+
+                # 检查障碍物是否超出边界或与其他障碍物重叠
+                if self._is_shape_valid(shape):
+                    break
+
+            # 添加障碍物到墙壁集合
+            self.walls.update(shape)
+
+        # 确保起点和终点不在障碍物中
+        self.walls.discard(tuple(self.current_position))
+        self.walls.discard(tuple(self.target_position))
+
+        # 确保迷宫连通，若无法连接则重新生成迷宫
+        if not self._is_path_clear(tuple(self.current_position), tuple(self.target_position)):
+            print("迷宫不可解，重新生成...")
+            self._generate_maze()
+
+    def _random_shape(self, x, y, size):
+        """随机生成大小不超过size个格子的障碍物形状"""
+        shape = set()
+        shape.add((x, y))  # 添加起始位置
+
+        while len(shape) < size:
+            # 随机选择一个已有的格子作为扩展点
+            base_x, base_y = random.choice(list(shape))
+            # 随机选择一个方向进行扩展
+            dx, dy = random.choice([(0, 1), (1, 0), (0, -1), (-1, 0)])
+            new_x, new_y = base_x + dx, base_y + dy
+
+            # 检查新格子是否超出边界
+            if 0 <= new_x < self.grid_size and 0 <= new_y < self.grid_size:
+                shape.add((new_x, new_y))
+
+        return shape
+
+    def _is_shape_valid(self, shape):
+        """检查形状是否超出边界或与其他障碍物重叠"""
+        for x, y in shape:
+            if x < 0 or x >= self.grid_size or y < 0 or y >= self.grid_size:
+                return False
+            if (x, y) in self.walls:
+                return False
+        return True
+
+    def step(self, action):
+        # 8方向移动向量
+        dx, dy = [
+            (0, -1),  # 上
+            (0, 1),  # 下
+            (-1, 0),  # 左
+            (1, 0),  # 右
+            (1, -1),  # 右上
+            (1, 1),  # 右下
+            (-1, 1),  # 左下
+            (-1, -1)  # 左上
+        ][action]
+
+        new_pos = self.current_position + [dx, dy]
+        hit_wall = (
+                tuple(new_pos) in self.walls
+                or new_pos[0] < 0
+                or new_pos[0] >= self.grid_size
+                or new_pos[1] < 0
+                or new_pos[1] >= self.grid_size
+        )
+
+        if not hit_wall:
+            self.current_position = new_pos
+        else:
+            self.bump_cnt+=1
+
+        # 奖励计算
+        reward = 0
+        done = np.array_equal(self.current_position, self.target_position)
+
+        # distance=np.abs(np.sum(self.current_position-self.target_position))*-0.001
+        reward+=-0.1
+        if done:
+            reward += 10
+        elif hit_wall:
+            reward += -0.1
+        
+
+        global_obs = np.zeros((self.grid_size, self.grid_size))
+        global_obs[tuple(self.current_position)] = 1
+        global_obs[list(self.walls)] = 2
+        global_obs[tuple(self.target_position)] = 3
+
+        
+        local_obs=np.array([self.current_position,self.target_position])
+
+        return list(global_obs.flatten())+list(local_obs.flatten()), reward, done, False, {}
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        np.random.seed(seed)
+        random.seed(seed)
+
+        self.bump_cnt=0
+
+        self.current_position = np.array([1, 1])
+        self._generate_maze()  # 每次重置生成新迷宫
+
+        global_obs = np.zeros((self.grid_size, self.grid_size))
+        global_obs[tuple(self.current_position)] = 1
+        global_obs[list(self.walls)] = 2
+        global_obs[tuple(self.target_position)] = 3
+
+
+        local_obs=np.array([self.current_position,self.target_position])
+
+        return list(global_obs.flatten())+list(local_obs.flatten()),  {}
+
+    def render(self):
+        # 如果是 "rgb_array" 模式，不初始化 Pygame 窗口
+        if self.render_mode == "rgb_array":
+            surface = pygame.Surface((self.grid_size * self.cell_size, self.grid_size * self.cell_size))
+            surface.fill((255, 255, 255))
+
+            # 绘制网格
+            for x in range(self.grid_size):
+                for y in range(self.grid_size):
+                    rect = pygame.Rect(
+                        x * self.cell_size,
+                        y * self.cell_size,
+                        self.cell_size,
+                        self.cell_size
+                    )
+                    if (x, y) in self.walls:
+                        pygame.draw.rect(surface, (0, 0, 0), rect)  # 墙
+                    elif (x, y) == tuple(self.target_position):
+                        pygame.draw.rect(surface, (0, 255, 0), rect)  # 目标
+                    elif (x, y) == tuple(self.current_position):
+                        pygame.draw.rect(surface, (0, 0, 255), rect)  # 智能体
+                    else:
+                        pygame.draw.rect(surface, (220, 220, 220), rect, 1)  # 路径
+
+            # 返回 RGB 数组
+            return pygame.surfarray.array3d(surface)
+
+        # 如果是 "human" 模式，初始化 Pygame 窗口并显示
+        elif self.render_mode == "human":
+            if self.window is None:
+                pygame.init()
+                self.window = pygame
+                self.window = pygame.display.set_mode(
+                (self.grid_size * self.cell_size, self.grid_size * self.cell_size))
+            pygame.display.set_caption("迷宫环境")
+            self.clock = pygame.time.Clock()
+
+        self.window.fill((255, 255, 255))
+
+        # 绘制网格
+        for x in range(self.grid_size):
+            for y in range(self.grid_size):
+                rect = pygame.Rect(
+                    x * self.cell_size,
+                    y * self.cell_size,
+                    self.cell_size,
+                    self.cell_size
+                )
+                if (x, y) in self.walls:
+                    pygame.draw.rect(self.window, (0, 0, 0), rect)  # 墙
+                elif (x, y) == tuple(self.target_position):
+                    pygame.draw.rect(self.window, (0, 255, 0), rect)  # 目标
+                elif (x, y) == tuple(self.current_position):
+                    pygame.draw.rect(self.window, (0, 0, 255), rect)  # 智能体
+                else:
+                    pygame.draw.rect(self.window, (220, 220, 220), rect, 1)  # 路径
+
+        # 事件处理
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                self.window = None
+                return
+
+        pygame.display.flip()
+        self.clock.tick(self.metadata["render_fps"])
+
+    def close(self):
+        if self.window is not None:
+            pygame.quit()
+            self.window = None
+
+
+if __name__ == "__main__":
+    env = MazeEnv(
+        grid_size=15,
+        target_position=(13, 13),
+        action_space_type="8d",
+        render_mode="rgb_array"  # 设置为 "rgb_array" 模式
+    )
+
+    obs, _ = env.reset(seed=42)
+    done = False
+
+    while not done:
+        action = env.action_space.sample()
+        obs, reward, done, _, _ = env.step(action)
+        rgb_array = env.render()  # 获取 RGB 数组
+        print(f"Step: {obs}, Reward: {reward}, Done: {done}")
+
+        # 如果需要保存或显示 RGB 数组，可以在这里处理
+        # 例如：保存为图片或使用 matplotlib 显示
+        # import matplotlib.pyplot as plt
+        # plt.imshow(rgb_array)
+        # plt.show()
+
+    env.close()

@@ -1,0 +1,5 @@
+{
+    "hint": "生成频率改为1 每次生成数量从1到9随机 存在最大数量为monster_num",
+    "monster_num_18-agent_type_0": 1.0,
+    "monster_num_27-agent_type_0": 1.0
+}

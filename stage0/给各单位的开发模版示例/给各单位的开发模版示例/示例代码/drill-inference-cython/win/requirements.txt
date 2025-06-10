@@ -1,0 +1,6 @@
+numpy==1.23.3
+typing_extensions==4.4.0
+dm-tree==0.1.7
+tensorflow==2.7.0
+networkx==2.8.7
+tensorflow_probability==0.15.0
