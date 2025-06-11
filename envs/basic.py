@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 import numpy as np
+import Threading
+import time
 
 class Aircraft:
     """飞船类"""
@@ -66,8 +68,43 @@ class FCRadar(Radar):
         self.erp = config["erp"]
         self.frequency = config["freq"]
 
+        self.timer = None
+        self.isTracking = False
+        self.startTime = None
+
     def setMode(self, mode):
         self.set_mode(mode)
+
+    def fire(self, isTracking: bool):
+        def _timeOutCallback():
+            if self.isTracking:
+                self.isTracking = False
+                print(f"雷达 {self.current_mode} 模式下，目标跟踪成功，导弹发射。")
+            self.startTime = None
+
+        def _stopTimer():
+            if self.timer:
+                self.timer.cancel()
+                self.timer = None
+            self.isTracking = False
+            self.startTime = None
+
+        if isTracking:
+            if not self.isTracking:
+                self.isTracking = True
+                self.startTime = time.time()
+
+                self.timer = threading.Timer(5.0, _timeOutCallback)
+                self.timer.start()
+                print('计时开始于:', self.startTime)
+            else:
+                print('跟踪失败。')
+        else:
+            print('跟踪失败，停止计时。')
+            if self.isTracking:
+                _stopTimer()
+                elapsedTime = time.time() - self.startTime
+                print(f"成功跟踪了{elapsed_time:.2f}秒")
 
 
 class EWAircraft(Aircraft):
@@ -88,7 +125,14 @@ class EWAircraft(Aircraft):
 
 
 class F35(Aircraft):
-    pass
+    def __init__(self):
+        pass
+
+    def fly(self, direction):
+        pass
+
+    def radarControl(self, mode):
+        pass
 
 
 class F18(Aircraft):
@@ -97,6 +141,12 @@ class F18(Aircraft):
         self.radar = FCRadar()
         self.radar.set_mode("MTT")  # 设置初始工作模式
         self.position = np.zeros(2)  # 初始化位置
+
+    def fly(self, direction):
+        pass
+
+    def radarControl(self, mode):
+        pass
 
 
 if __name__ == '__main__':
